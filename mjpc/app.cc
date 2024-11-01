@@ -49,9 +49,10 @@ ABSL_FLAG(bool, show_left_ui, true,
           "If true, the left UI (ui0) will be visible on startup");
 ABSL_FLAG(bool, show_plot, true,
           "If true, the plots will be visible on startup");
-ABSL_FLAG(bool, show_info, true,
+ABSL_FLAG(bool, show_info, false,
           "If true, the infotext panel will be visible on startup");
-
+ABSL_FLAG(bool, sync_ros, true,
+          "If true, try to sync ros time passed as task parameters with sim time");
 
 namespace {
 namespace mj = ::mujoco;
@@ -59,6 +60,7 @@ namespace mju = ::mujoco::util_mjpc;
 
 // maximum mis-alignment before re-sync (simulation seconds)
 const double syncMisalign = 0.1;
+//const double syncROSMisalign = 0.01;
 
 // fraction of refresh available for simulation
 const double simRefreshFraction = 0.7;
@@ -205,11 +207,15 @@ void EstimatorLoop(mj::Simulate& sim) {
   }
 }
 
+
+
 // simulate in background thread (while rendering in main thread)
 void PhysicsLoop(mj::Simulate& sim) {
   // cpu-sim synchronization point
   std::chrono::time_point<mj::Simulate::Clock> syncCPU;
   mjtNum syncSim = 0;
+  // syncing sim and ROS
+  mjtNum syncROS = 0;
 
   // run until asked to exit
   while (!sim.exitrequest.load()) {
@@ -272,108 +278,226 @@ void PhysicsLoop(mj::Simulate& sim) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    {
-      // lock the sim mutex
-      const std::lock_guard<std::mutex> lock(sim.mtx);
+    if (!absl::GetFlag(FLAGS_sync_ros)){
+      {
+        // lock the sim mutex
+        const std::lock_guard<std::mutex> lock(sim.mtx);
 
-      if (m) {  // run only if model is present
-        sim.agent->ActiveTask()->Transition(m, d);
+        if (m) {  // run only if model is present
+          sim.agent->ActiveTask()->Transition(m, d);
 
-        // running
-        if (sim.run) {
-          // record cpu time at start of iteration
-          const auto startCPU = mj::Simulate::Clock::now();
+          // running
+          if (sim.run) {
+            // record cpu time at start of iteration
+            const auto startCPU = mj::Simulate::Clock::now();
 
-          // elapsed CPU and simulation time since last sync
-          const auto elapsedCPU = startCPU - syncCPU;
-          double elapsedSim = d->time - syncSim;
+            // elapsed CPU and simulation time since last sync
+            const auto elapsedCPU = startCPU - syncCPU;
+            double elapsedSim = d->time - syncSim;
 
-          // inject noise
-          if (sim.ctrl_noise_std) {
-            // convert rate and scale to discrete time (Ornstein–Uhlenbeck)
-            mjtNum rate = mju_exp(-m->opt.timestep / sim.ctrl_noise_rate);
-            mjtNum scale = sim.ctrl_noise_std * mju_sqrt(1 - rate * rate);
+            // inject noise
+            if (sim.ctrl_noise_std) {
+              // convert rate and scale to discrete time (Ornstein–Uhlenbeck)
+              mjtNum rate = mju_exp(-m->opt.timestep / sim.ctrl_noise_rate);
+              mjtNum scale = sim.ctrl_noise_std * mju_sqrt(1 - rate * rate);
 
-            for (int i = 0; i < m->nu; i++) {
-              // update noise
-              ctrlnoise[i] =
-                  rate * ctrlnoise[i] + scale * mju_standardNormal(nullptr);
+              for (int i = 0; i < m->nu; i++) {
+                // update noise
+                ctrlnoise[i] =
+                    rate * ctrlnoise[i] + scale * mju_standardNormal(nullptr);
 
-              // noise added in controller callback
-            }
-          }
-
-          // requested slow-down factor
-          double slowdown = 100 / sim.percentRealTime[sim.real_time_index];
-
-          // misalignment condition: distance from target sim time is bigger
-          // than maximum misalignment `syncMisalign`
-          bool misaligned = mju_abs(Seconds(elapsedCPU).count() / slowdown -
-                                    elapsedSim) > syncMisalign;
-
-          // out-of-sync (for any reason): reset sync times, step
-          if (elapsedSim < 0 || elapsedCPU.count() < 0 ||
-              syncCPU.time_since_epoch().count() == 0 || misaligned ||
-              sim.speed_changed) {
-            // re-sync
-            syncCPU = startCPU;
-            syncSim = d->time;
-            sim.speed_changed = false;
-
-            // clear old perturbations, apply new
-            mju_zero(d->xfrc_applied, 6 * m->nbody);
-            sim.ApplyPosePerturbations(0);  // move mocap bodies only
-            sim.ApplyForcePerturbations();
-
-            // run single step, let next iteration deal with timing
-            sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
-            mj_step(m, d);
-          } else {  // in-sync: step until ahead of cpu
-            bool measured = false;
-            mjtNum prevSim = d->time;
-            double refreshTime = simRefreshFraction / sim.refresh_rate;
-
-            // step while sim lags behind cpu and within refreshTime
-            while (Seconds((d->time - syncSim) * slowdown) <
-                       mj::Simulate::Clock::now() - syncCPU &&
-                   mj::Simulate::Clock::now() - startCPU <
-                       Seconds(refreshTime)) {
-              // measure slowdown before first step
-              if (!measured && elapsedSim) {
-                sim.measured_slowdown =
-                    std::chrono::duration<double>(elapsedCPU).count() /
-                    elapsedSim;
-                measured = true;
+                // noise added in controller callback
               }
+            }
+
+            // requested slow-down factor
+            double slowdown = 100 / sim.percentRealTime[sim.real_time_index];
+
+            // misalignment condition: distance from target sim time is bigger
+            // than maximum misalignment `syncMisalign`
+            bool misaligned = mju_abs(Seconds(elapsedCPU).count() / slowdown -
+                                      elapsedSim) > syncMisalign;
+
+            // out-of-sync (for any reason): reset sync times, step
+            if (elapsedSim < 0 || elapsedCPU.count() < 0 ||
+                syncCPU.time_since_epoch().count() == 0 || misaligned ||
+                sim.speed_changed) {
+              // re-sync
+              syncCPU = startCPU;
+              syncSim = d->time;
+              sim.speed_changed = false;
 
               // clear old perturbations, apply new
               mju_zero(d->xfrc_applied, 6 * m->nbody);
               sim.ApplyPosePerturbations(0);  // move mocap bodies only
               sim.ApplyForcePerturbations();
 
-              // call mj_step
+              // run single step, let next iteration deal with timing
               sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
               mj_step(m, d);
+            } else {  // in-sync: step until ahead of cpu
+              bool measured = false;
+              mjtNum prevSim = d->time;
+              double refreshTime = simRefreshFraction / sim.refresh_rate;
 
-              // break if reset
-              if (d->time < prevSim) {
-                break;
+              // step while sim lags behind cpu and within refreshTime
+              while (Seconds((d->time - syncSim) * slowdown) <
+                        mj::Simulate::Clock::now() - syncCPU &&
+                    mj::Simulate::Clock::now() - startCPU <
+                        Seconds(refreshTime)) {
+                // measure slowdown before first step
+                if (!measured && elapsedSim) {
+                  sim.measured_slowdown =
+                      std::chrono::duration<double>(elapsedCPU).count() /
+                      elapsedSim;
+                  measured = true;
+                }
+
+                // clear old perturbations, apply new
+                mju_zero(d->xfrc_applied, 6 * m->nbody);
+                sim.ApplyPosePerturbations(0);  // move mocap bodies only
+                sim.ApplyForcePerturbations();
+
+                // call mj_step
+                sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
+                mj_step(m, d);
+
+                // break if reset
+                if (d->time < prevSim) {
+                  break;
+                }
               }
             }
+          } else {  // paused
+            // apply pose perturbation
+            sim.ApplyPosePerturbations(1);  // move mocap and dynamic bodies
+
+            // still accept jobs when simulation is paused
+            sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
+
+            // run mj_forward, to update rendering and joint sliders
+            mj_forward(m, d);
+            sim.speed_changed = true;
           }
-        } else {  // paused
-          // apply pose perturbation
-          sim.ApplyPosePerturbations(1);  // move mocap and dynamic bodies
-
-          // still accept jobs when simulation is paused
-          sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
-
-          // run mj_forward, to update rendering and joint sliders
-          mj_forward(m, d);
-          sim.speed_changed = true;
         }
-      }
-    }  // release sim.mtx
+      }  // release sim.mtx
+    } else {
+      // sync_ros = true
+      {
+        // lock the sim mutex
+        const std::lock_guard<std::mutex> lock(sim.mtx);
+
+        if (m) {  // run only if model is present
+          sim.agent->ActiveTask()->Transition(m, d);
+
+          // running
+          if (sim.run) {
+            // record ros time at start of iteration
+            const auto nowROS = d->mocap_pos[3];
+            
+
+            // elapsed CPU and simulation time since last sync
+            const auto elapsedROS = nowROS - syncROS;
+            double elapsedSim = d->time - syncSim;
+
+            printf("In loop: elapsedROS %f | elapsedSim %f\n",elapsedROS, elapsedSim);
+
+            // inject noise
+            if (sim.ctrl_noise_std) {
+              // convert rate and scale to discrete time (Ornstein–Uhlenbeck)
+              mjtNum rate = mju_exp(-m->opt.timestep / sim.ctrl_noise_rate);
+              mjtNum scale = sim.ctrl_noise_std * mju_sqrt(1 - rate * rate);
+
+              for (int i = 0; i < m->nu; i++) {
+                // update noise
+                ctrlnoise[i] =
+                    rate * ctrlnoise[i] + scale * mju_standardNormal(nullptr);
+
+                // noise added in controller callback
+              }
+            }
+
+            // requested slow-down factor
+            //double slowdown = 100 / sim.percentRealTime[sim.real_time_index];
+            // fixed to 1.0 between sim/real ratio
+            double slowdown = 1.0;
+
+            // misalignment condition: distance from target sim time is bigger
+            // than maximum misalignment `syncMisalign`
+            bool misaligned = mju_abs(elapsedROS / slowdown -
+                                      elapsedSim) > syncMisalign;
+
+            // out-of-sync (for any reason): reset sync times, step
+            if (elapsedSim < 0 || elapsedROS < 0 || 
+                syncROS == 0 || misaligned ||
+                sim.speed_changed) {
+              // re-sync
+              syncROS = nowROS;
+              syncSim = d->time;
+              sim.speed_changed = false;
+
+              // clear old perturbations, apply new
+              mju_zero(d->xfrc_applied, 6 * m->nbody);
+              sim.ApplyPosePerturbations(0);  // move mocap bodies only
+              sim.ApplyForcePerturbations();
+
+              // run single step, let next iteration deal with timing
+              sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
+              mj_step(m, d);
+            } else {  // in-sync: step until ahead of ROS
+              bool measured = false;
+              mjtNum prevSim = d->time;
+              double refreshTime = simRefreshFraction / sim.refresh_rate;
+
+              // step while sim lags behind cpu and within refreshTime
+              while ( (( (d->time - syncSim) * slowdown) < elapsedROS) &&
+                    (elapsedROS < refreshTime) ) {
+                // measure slowdown before first step
+                if (!measured && elapsedSim) {
+                  sim.measured_slowdown = elapsedROS / elapsedSim;
+                  measured = true;
+                }
+
+                // clear old perturbations, apply new
+                mju_zero(d->xfrc_applied, 6 * m->nbody);
+                sim.ApplyPosePerturbations(0);  // move mocap bodies only
+                sim.ApplyForcePerturbations();
+
+                // call mj_step
+                sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
+                mj_step(m, d);
+
+                // break if reset
+                if (d->time < prevSim) {
+                  break;
+                }
+              }
+            }
+          } else {  // paused
+            // apply pose perturbation
+            sim.ApplyPosePerturbations(1);  // move mocap and dynamic bodies
+
+            // still accept jobs when simulation is paused
+            sim.agent->ExecuteAllRunBeforeStepJobs(m, d);
+
+            // run mj_forward, to update rendering and joint sliders
+            mj_forward(m, d);
+            sim.speed_changed = true;
+          }
+        }
+      }  // release sim.mtx
+    }
+
+    if (absl::GetFlag(FLAGS_sync_ros)){
+     //printf("task name: %s\n", sim.agent->ActiveTask()->Name().c_str());
+     const char *task_name = "Minicrane";
+
+     if (strcmp(sim.agent->ActiveTask()->Name().c_str(), task_name) == 0){
+
+       printf("rostime = %f d->time = %f\n", sim.agent->ActiveTask()->parameters[3],d->time);
+     }
+     printf("sim clock now:  %ld \n", mj::Simulate::Clock::now().time_since_epoch().count());
+   }
 
     // state
     if (sim.uiloadrequest.load() == 0) {
@@ -469,6 +593,7 @@ void MjpcApp::Start() {
   printf("    planning     :  %i\n", sim->agent->planner_threads());
   printf("  Estimator      :  %i\n", sim->agent->estimator_threads());
   printf("    estimation   :  %i\n", sim->agent->estimator_enabled);
+  printf("Sync ROS         :  %i\n", absl::GetFlag(FLAGS_sync_ros));
 
   // set control callback
   mjcb_control = controller;

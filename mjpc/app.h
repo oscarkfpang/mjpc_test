@@ -21,6 +21,10 @@
 #include "mjpc/simulate.h"  // mjpc fork
 #include "mjpc/task.h"
 
+using ClockT = std::chrono::_V2::steady_clock;
+using Seconds = std::chrono::duration<double>;
+using TimePoint = std::chrono::time_point<ClockT>;
+
 namespace mjpc {
 class MjpcApp {
  public:
@@ -32,6 +36,12 @@ class MjpcApp {
   void Start();
 
   ::mujoco::Simulate* Sim();
+
+ // for syncing ROS time with sim time
+ private:
+  std::chrono::time_point<ClockT> syncROS;
+  std::chrono::time_point<ClockT> start_time;
+  std::atomic_flag time_initialized;
 };
 
 void StartApp(std::vector<std::shared_ptr<mjpc::Task>> tasks, int task_id = 0);

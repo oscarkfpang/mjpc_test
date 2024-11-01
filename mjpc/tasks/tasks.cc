@@ -30,6 +30,7 @@
 #include "mjpc/tasks/humanoid/tracking/tracking.h"
 #include "mjpc/tasks/humanoid/walk/walk.h"
 #include "mjpc/tasks/manipulation/manipulation.h"
+#include "mjpc/tasks/minicrane/minicrane.h"
 // DEEPMIND INTERNAL IMPORT
 #include "mjpc/tasks/op3/stand.h"
 #include "mjpc/tasks/panda/panda.h"
@@ -57,6 +58,7 @@ std::vector<std::shared_ptr<Task>> GetTasks() {
       std::make_shared<humanoid::Tracking>(),
       std::make_shared<humanoid::Walk>(),
       std::make_shared<manipulation::Bring>(),
+      std::make_shared<Minicrane>(),
       // DEEPMIND INTERNAL TASKS
       std::make_shared<OP3>(),
       std::make_shared<Panda>(),

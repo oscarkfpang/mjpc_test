@@ -1,0 +1,71 @@
+<mujoco model="Mini Crane">
+  <include file="../common.xml"/>
+  <include file="minicrane_payload.xml" />
+
+  <size memory="1M"/>
+
+  <custom>
+    <!-- agent -->
+    <numeric name="agent_planner" data="0" />
+    <numeric name="agent_horizon" data="0.625" />
+    <numeric name="agent_timestep" data="0.01" />
+    <numeric name="agent_policy_width" data="0.0035" />
+    <numeric name="sampling_spline_points" data="6" />
+    <numeric name="sampling_exploration" data="0.1" />
+    <numeric name="sampling_trajectories" data="40" />
+    <numeric name="sampling_representation" data="1" />
+    <!-- parameter -->
+    <numeric name="residual_GoalX" data="0 -0.8 0.8" />
+    <numeric name="residual_GoalY" data="-0.7 -0.8 0.8" />
+    <numeric name="residual_GoalZ" data="1.0 0 1.5" />
+    <numeric name="residual_ROSTime" data="0.0 0.0 1e10" />
+    <!--numeric name="residual_Slew" data="0 -3.0 3.0" />
+    <numeric name="residual_Luff" data="0 -3.0 3.0" />
+    <numeric name="residual_PayX" data="0.7 -0.8 0.8" />
+    <numeric name="residual_PayY" data="0 -0.8 0.8" />
+    <numeric name="residual_PayZ" data="1.0 0 1.4" / -->
+
+  </custom>
+
+  <worldbody>
+
+    <!-- define a yellow target for crane's payload to follow -->
+    <body name="target" mocap="true" pos="0.6 0.1 0.4">
+      <geom name="target" type="sphere" size="0.03" rgba="1 1 0 1"/>
+      <light name="target_light" diffuse="0.7 0.7 0.7" pos="0 0 0.5"/>
+    </body>
+    
+  </worldbody>
+
+  <!-- disable collision between payload and the yellow target -->
+  <!-- https://github.com/google-deepmind/mujoco/issues/104 -->
+  <contact>
+        <exclude name="exclude_2_body_0" body1="target" body2="payload"/>
+  </contact>
+
+  <sensor>
+    <!-- cost -->
+    <user name="Distance" dim="1" user="2 2000 0 2000 0.04" />
+    <user name="Control" dim="3" user="0 0 0.0 100.0"/>
+    <user name="Orientation" dim="4" user="0 20.5 0.0 100.0"/>
+    <user name="Angular_acc" dim="3" user="0 100 0.0 200.0"/>
+    <user name="Lin_vel" dim="9" user="0 0 0.0 100.0"/>
+
+    <!-- use this for hoist control-->
+    <!-- user name="Lin_vel" dim="10" user="0 10 0.0 100.0"/ -->
+
+
+
+    <!-- trace -->
+    <framepos name="trace0" objtype="site" objname="p_cg"/>
+
+    <!-- residual -->
+    <framepos name="p_pos" objtype="site" objname="p_cg"/>
+    <framelinvel name="boom_vel" objtype="site" objname="tip"/>
+    <!-- framepos name="target" objtype="geom" objname="target"/ -->
+    <framequat name="p_quat" objtype="site" objname="p_cg"/>
+    <frameangacc name="angle_acc" objtype="site" objname="p_cg"/> 
+
+  </sensor>
+
+</mujoco>

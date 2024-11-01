@@ -64,6 +64,8 @@ add_library(
   tasks/manipulation/common.h
   tasks/manipulation/manipulation.cc
   tasks/manipulation/manipulation.h
+  tasks/minicrane/minicrane.cc
+  tasks/minicrane/minicrane.h
   tasks/op3/stand.cc
   tasks/op3/stand.h
   tasks/panda/panda.cc
