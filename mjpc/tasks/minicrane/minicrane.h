@@ -12,6 +12,8 @@ class Minicrane : public Task {
   std::string Name() const override;
   std::string XmlPath() const override;
 
+  int count = 0;
+
   class ResidualFn : public BaseResidualFn {
    public:
     explicit ResidualFn(const Minicrane* task) : BaseResidualFn(task) {}

@@ -71,7 +71,9 @@ void Minicrane::TransitionLocked(mjModel* model, mjData* data) {
     data->mocap_pos[0] = parameters[0];
     data->mocap_pos[1] = parameters[1];
     data->mocap_pos[2] = parameters[2];
+    //parameters[3] = count;
     data->mocap_pos[3] = parameters[3];
+    count++;
 }
 
 }  // namespace mjpc

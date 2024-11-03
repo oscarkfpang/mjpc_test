@@ -114,8 +114,9 @@ if (!(expr).ok()) { \
 namespace {
 grpc::Status SetState(const agent::State& state, mjpc::Agent* agent,
                       const mjModel* model, mjData* data) {
-  if (state.has_time()) data->time = state.time();
-
+  if (state.has_time()) {data->time = state.time();
+  printf("in grpc, agent set time from state: %f\n", state.time());
+  }
   if (state.qpos_size() > 0) {
     CHECK_SIZE("qpos", model->nq, state.qpos_size());
     mju_copy(data->qpos, state.qpos().data(), model->nq);

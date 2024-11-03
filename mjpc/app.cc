@@ -51,7 +51,7 @@ ABSL_FLAG(bool, show_plot, true,
           "If true, the plots will be visible on startup");
 ABSL_FLAG(bool, show_info, false,
           "If true, the infotext panel will be visible on startup");
-ABSL_FLAG(bool, sync_ros, true,
+ABSL_FLAG(bool, sync_ros, false,
           "If true, try to sync ros time passed as task parameters with sim time");
 
 namespace {
@@ -295,6 +295,11 @@ void PhysicsLoop(mj::Simulate& sim) {
             const auto elapsedCPU = startCPU - syncCPU;
             double elapsedSim = d->time - syncSim;
 
+            double nowROS = sim.agent->ActiveTask()->parameters[3];
+            printf("In normal loop: elapsedSim %f  |  parameter[3] %f | data.time %f \n",elapsedSim, nowROS, d->time);
+
+
+
             // inject noise
             if (sim.ctrl_noise_std) {
               // convert rate and scale to discrete time (Ornstein–Uhlenbeck)
@@ -393,7 +398,7 @@ void PhysicsLoop(mj::Simulate& sim) {
           // running
           if (sim.run) {
             // record ros time at start of iteration
-            const auto nowROS = d->mocap_pos[3];
+            const auto nowROS = sim.agent->ActiveTask()->parameters[3];
             
 
             // elapsed CPU and simulation time since last sync
@@ -488,17 +493,18 @@ void PhysicsLoop(mj::Simulate& sim) {
       }  // release sim.mtx
     }
 
+/*
     if (absl::GetFlag(FLAGS_sync_ros)){
      //printf("task name: %s\n", sim.agent->ActiveTask()->Name().c_str());
      const char *task_name = "Minicrane";
 
      if (strcmp(sim.agent->ActiveTask()->Name().c_str(), task_name) == 0){
 
-       printf("rostime = %f d->time = %f\n", sim.agent->ActiveTask()->parameters[3],d->time);
+       //printf("rostime = %f d->time = %f\n", sim.agent->ActiveTask()->parameters[3],d->time);
      }
-     printf("sim clock now:  %ld \n", mj::Simulate::Clock::now().time_since_epoch().count());
+     //printf("sim clock now:  %ld \n", mj::Simulate::Clock::now().time_since_epoch().count());
    }
-
+*/
     // state
     if (sim.uiloadrequest.load() == 0) {
       // set ground truth state if no active estimator
